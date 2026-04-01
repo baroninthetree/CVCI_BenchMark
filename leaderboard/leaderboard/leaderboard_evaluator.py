@@ -102,6 +102,11 @@ class LeaderboardEvaluator(object):
 
         self.statistics_manager = statistics_manager
 
+        # Independent timeout settings
+        self.client_timeout = args.client_timeout
+        self.scenario_timeout = args.scenario_timeout
+        self.agent_timeout = args.agent_timeout
+
         # This is the ROS1 bridge server instance. This is not encapsulated inside the ROS1 agent because the same
         # instance is used on all the routes (i.e., the server is not restarted between routes). This is done
         # to avoid reconnection issues between the server and the roslibpy client.
@@ -121,7 +126,7 @@ class LeaderboardEvaluator(object):
         self.module_agent = importlib.import_module(module_name)
 
         # Create the ScenarioManager
-        self.manager = ScenarioManager(args.timeout, self.statistics_manager, args.debug)
+        self.manager = ScenarioManager(args.scenario_timeout, self.statistics_manager, args.debug)
 
         # Time control for summary purposes
         self._start_time = GameTime.get_time()
@@ -139,7 +144,7 @@ class LeaderboardEvaluator(object):
         Either the agent initialization watchdog is triggered, or the runtime one at scenario manager
         """
         if self._agent_watchdog and not self._agent_watchdog.get_status():
-            raise RuntimeError("Timeout: Agent took longer than {}s to setup".format(self.client_timeout))
+            raise RuntimeError("Timeout: Agent took longer than {}s to setup".format(self.agent_timeout))
         elif self.manager:
             self.manager.signal_handler(signum, frame)
 
@@ -211,8 +216,7 @@ class LeaderboardEvaluator(object):
         while attempts < num_max_restarts:
             try:
                 client = carla.Client(args.host, args.port)
-                if args.timeout:
-                    client_timeout = args.timeout
+                client_timeout = self.client_timeout
                 client.set_timeout(client_timeout)
 
                 settings = carla.WorldSettings(
@@ -347,7 +351,7 @@ class LeaderboardEvaluator(object):
 
         # Set up the user's agent, and the timer to avoid freezing the simulation
         try:
-            self._agent_watchdog = Watchdog(args.timeout)
+            self._agent_watchdog = Watchdog(self.agent_timeout)
             self._agent_watchdog.start()
             agent_class_name = getattr(self.module_agent, 'get_entry_point')()
             agent_class_obj = getattr(self.module_agent, agent_class_name)
@@ -475,7 +479,6 @@ class LeaderboardEvaluator(object):
             # Run the scenario
             config = route_indexer.get_next_config()
             crashed = self._load_and_run_scenario(args, config)
-            print(crashed, flush=True)
             # Save the progress and write the route statistics
             self.statistics_manager.save_progress(route_indexer.index, route_indexer.total)
             self.statistics_manager.write_statistics()
@@ -521,8 +524,12 @@ def main():
                         help='Run with debug output', default=0)
     parser.add_argument('--record', type=str, default='',
                         help='Use CARLA recording feature to create a recording of the scenario')
-    parser.add_argument('--timeout', default=600.0, type=float,
-                        help='Set the CARLA client timeout value in seconds')
+    parser.add_argument('--client-timeout', default=300.0, type=float,
+                        help='CARLA client/RPC timeout in seconds')
+    parser.add_argument('--scenario-timeout', default=300.0, type=float,
+                        help='Maximum allowed scenario duration in seconds')
+    parser.add_argument('--agent-timeout', default=20.0, type=float,
+                        help='Maximum allowed agent setup/tick time in seconds')
 
     # simulation setup
     parser.add_argument('--routes', required=True,
